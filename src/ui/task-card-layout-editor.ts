@@ -1,5 +1,5 @@
 import { StateEffect, StateField, type Text } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from '@codemirror/view';
 import { createOwnerElement, getOwnerWindow } from '../core/dom-compat';
 import { allowsOperonDocumentAugmentations } from './editor-augmentation-scope';
 
@@ -35,6 +35,7 @@ export function createTaskCardEditorBridge(refresh: () => void) {
 	const field = StateField.define<Map<number, TaskCardEditorLayout>>({
 		create: () => new Map(),
 		update(value, transaction) {
+			if (!transaction.docChanged && !transaction.effects.some(effect => effect.is(updateLayout))) return value;
 			const next = new Map<number, TaskCardEditorLayout>();
 			for (const [id, layout] of value) {
 				next.set(id, transaction.docChanged ? {
@@ -66,7 +67,10 @@ export function createTaskCardEditorBridge(refresh: () => void) {
 			if (allowsOperonDocumentAugmentations(view)) views.add(view);
 			refresh();
 		}
-		update(): void { refresh(); }
+		update(update: ViewUpdate): void {
+			// Selection-only updates cannot move card anchors; skip the per-card layout reads.
+			if (update.docChanged || update.viewportChanged || update.geometryChanged || update.heightChanged) refresh();
+		}
 		destroy(): void {
 			views.delete(this.view);
 			const frame = frames.get(this.view);

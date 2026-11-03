@@ -9,6 +9,7 @@ import { createOwnerElement } from '../core/dom-compat';
 import { IndexedTask } from '../types/fields';
 import type { ProjectSerialDisplay } from '../core/project-serials';
 import {
+	CompactTaskLookupContext,
 	InlineTaskCompactChipEntry,
 	buildInlineTaskCompactChipEntries,
 	createInlineTaskCompactChipElement,
@@ -41,6 +42,7 @@ interface TaskWikilinkOverlayChipRenderCallbacks {
 	app: App;
 	getSettings: () => OperonSettings;
 	getAllTasks: () => IndexedTask[];
+	getCompactTaskLookup?: () => CompactTaskLookupContext;
 	sourcePath: string;
 	owner?: Node | null;
 	getProjectSerialDisplay?: (operonId: string, task?: IndexedTask) => ProjectSerialDisplay | null;
@@ -55,6 +57,7 @@ export function getTaskWikilinkOverlayChipSignature(
 	allTasks: IndexedTask[],
 	getProjectSerialDisplay?: (operonId: string, task?: IndexedTask) => ProjectSerialDisplay | null,
 	getRepeatSkipDates?: (repeatSeriesId: string) => string[],
+	taskLookup?: CompactTaskLookupContext,
 ): string {
 	const locationIndex = shouldResolveLocationCompactChips(settings, settings.taskWikilinkOverlayCompactChips)
 		? getLocationPlaceIndex(app, settings)
@@ -66,7 +69,7 @@ export function getTaskWikilinkOverlayChipSignature(
 		allTasks,
 		settings.taskWikilinkOverlayCompactChips,
 		locationIndex?.resolve,
-		{ task, projectSerialDisplay: getProjectSerialDisplay?.(task.operonId, task), app, repeatSkipDateResolver: getRepeatSkipDates },
+		{ task, projectSerialDisplay: getProjectSerialDisplay?.(task.operonId, task), app, repeatSkipDateResolver: getRepeatSkipDates, taskLookup },
 	).map(entry => [
 		entry.key,
 		entry.label,
@@ -116,14 +119,15 @@ export function buildTaskWikilinkOverlayChipContainer(
 	const locationResolver = shouldResolveLocationCompactChips(settings, settings.taskWikilinkOverlayCompactChips)
 		? getLocationPlaceIndex(callbacks.app, settings).resolve
 		: undefined;
+	const taskLookup = callbacks.getCompactTaskLookup?.();
 	const entries = buildInlineTaskCompactChipEntries(
 		task.fieldValues,
 		task.tags,
 		settings,
-		callbacks.getAllTasks(),
+		taskLookup ? [] : callbacks.getAllTasks(),
 		settings.taskWikilinkOverlayCompactChips,
 		locationResolver,
-		{ task, projectSerialDisplay: callbacks.getProjectSerialDisplay?.(task.operonId, task), app: callbacks.app, repeatSkipDateResolver: callbacks.getRepeatSkipDates },
+		{ task, projectSerialDisplay: callbacks.getProjectSerialDisplay?.(task.operonId, task), app: callbacks.app, repeatSkipDateResolver: callbacks.getRepeatSkipDates, taskLookup },
 	);
 	if (entries.length === 0) return null;
 

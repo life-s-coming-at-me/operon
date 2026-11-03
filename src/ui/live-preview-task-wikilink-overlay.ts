@@ -41,6 +41,7 @@ import {
 import { bindOperonHoverTooltip, createCompactTaskMarkdownTooltipContent } from './operon-hover-tooltip';
 import { setAccessibleLabelWithoutTooltip } from './accessibility-label';
 import { buildTaskWikilinkOverlayChipContainer, getTaskWikilinkOverlayChipSignature } from './task-wikilink-overlay-chips';
+import type { CompactTaskLookupContext } from './compact-task-layout';
 import { resolveSubtaskActionIcon, resolveSubtaskActionLabelKey, resolveSubtaskChipKinds, resolveSubtaskActionIconForKind, resolveSubtaskActionLabelKeyForKind } from '../core/subtask-action';
 import { scanTaskWikiLinksInLine, type TaskWikiLinkMatch } from './task-wikilink-scanner';
 import { bindTaskTitleLinkPreview } from './compact-chip-link-preview';
@@ -56,6 +57,8 @@ export interface LivePreviewTaskWikilinkCallbacks {
 	getSettings: () => OperonSettings;
 	getPipelines: () => Pipeline[];
 	getAllTasks: () => IndexedTask[];
+	getTask?: (operonId: string) => IndexedTask | undefined;
+	getCompactTaskLookup?: () => CompactTaskLookupContext;
 	getFileTaskByPath: FileTaskLookup;
 	hasDuplicateOperonIdConflict?: (operonId: string) => boolean;
 	getDescendantTaskSummary: (operonId: string) => DescendantTaskSummary;
@@ -161,9 +164,10 @@ class TaskWikilinkTrailingWidget extends WidgetType {
 			task,
 			callbacks.app,
 			callbacks.getSettings(),
-			callbacks.getAllTasks(),
+			callbacks.getCompactTaskLookup ? [] : callbacks.getAllTasks(),
 			callbacks.getProjectSerialDisplay,
 			callbacks.getRepeatSkipDates,
+			callbacks.getCompactTaskLookup?.(),
 		);
 		this.renderSignature = buildTaskWikilinkTrailingRenderSignature(
 			task,
@@ -216,6 +220,7 @@ class TaskWikilinkTrailingWidget extends WidgetType {
 			app: this.callbacks.app,
 			getSettings: this.callbacks.getSettings,
 			getAllTasks: this.callbacks.getAllTasks,
+			getCompactTaskLookup: this.callbacks.getCompactTaskLookup,
 			sourcePath: this.callbacks.getFilePath(view),
 			owner: wrap,
 			getProjectSerialDisplay: this.callbacks.getProjectSerialDisplay,
@@ -545,6 +550,7 @@ export function operonLivePreviewTaskWikilinkOverlayExtension(
 						{
 							getFileTaskByPath: callbacks.getFileTaskByPath,
 							getAllTasks: callbacks.getAllTasks,
+							getTask: callbacks.getTask,
 							hasDuplicateOperonIdConflict: callbacks.hasDuplicateOperonIdConflict,
 						},
 						match.alias,

@@ -36,6 +36,8 @@ export type FileTaskLookup = (filePath: string) => IndexedTask | undefined;
 export interface TaskWikilinkOverlayLookup {
 	getFileTaskByPath: FileTaskLookup;
 	getAllTasks: () => readonly IndexedTask[];
+	/** Indexed lookup by operonId; ids are unique, so it replaces scanning getAllTasks. */
+	getTask?: (operonId: string) => IndexedTask | undefined;
 	hasDuplicateOperonIdConflict?: (operonId: string) => boolean;
 }
 export type TaskFileLinkLabelState = 'default' | 'done' | 'cancelled';
@@ -104,7 +106,10 @@ export function resolveTaskWikilinkOverlayLink(
 		const operonId = parseInlineTaskWikilinkSubpath(subpath);
 		if (!operonId) return null;
 		if (lookups.hasDuplicateOperonIdConflict?.(operonId)) return null;
-		const allTasks = lookups.getAllTasks();
+		const indexedTask = lookups.getTask?.(operonId.trim());
+		const allTasks = lookups.getTask
+			? (indexedTask ? [indexedTask] : [])
+			: lookups.getAllTasks();
 		if (!(resolvedFile instanceof TFile)) {
 			const fallbackFile = resolveTaskFileLinkFileFromVault(app, path);
 			const fallbackTarget = fallbackFile instanceof TFile

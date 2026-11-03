@@ -14,7 +14,7 @@ const source = fs.readFileSync(path.join(root, 'main.ts'), 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
 const plugin = ast.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'OperonPlugin');
 assert.ok(plugin);
-const names = ['registerReadingModeProcessor', 'resolveReadingViewSectionTasks', 'readingListItemMatchesTask', 'getReadingListItemSourceLine', 'getReadingListItemLineCandidates', 'readReadingDataLine', 'getReadingListItemOwnText', 'isRenderedCodeElement', 'isFencedMarkdownSection', 'isMarkdownFenceLine'];
+const names = ['registerReadingModeProcessor', 'getCompactTaskRenderContextForIndex', 'resolveReadingViewSectionTasks', 'readingListItemMatchesTask', 'getReadingListItemSourceLine', 'getReadingListItemLineCandidates', 'readReadingDataLine', 'getReadingListItemOwnText', 'isRenderedCodeElement', 'isFencedMarkdownSection', 'isMarkdownFenceLine'];
 const methods = names.map(name => {
  const method = plugin.members.find(member => member.name?.getText(ast) === name);
  assert.ok(method, name);

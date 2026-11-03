@@ -252,7 +252,24 @@ export function buildForwardMapping(mappings: KeyMapping[]): Map<string, string>
  * Build reverse mapping: visiblePropertyName → canonicalKey.
  * Used when reading from YAML.
  */
+// parseTaskLine builds this for every task line on every editor update. The
+// result is shared, so callers must treat it as read-only.
+let reverseMappingCache: { fingerprint: string; map: Map<string, string> } | null = null;
+
 export function buildReverseMapping(mappings: KeyMapping[]): Map<string, string> {
+	let fingerprint: string | null;
+	try {
+		fingerprint = JSON.stringify(mappings);
+	} catch {
+		fingerprint = null;
+	}
+	if (fingerprint !== null && reverseMappingCache?.fingerprint === fingerprint) return reverseMappingCache.map;
+	const map = computeReverseMapping(mappings);
+	if (fingerprint !== null) reverseMappingCache = { fingerprint, map };
+	return map;
+}
+
+function computeReverseMapping(mappings: KeyMapping[]): Map<string, string> {
 	const map = new Map<string, string>();
 	const setIfAbsent = (sourceKey: string, canonicalKey: string): void => {
 		if (!sourceKey || map.has(sourceKey)) return;

@@ -78,7 +78,8 @@ function resolveDynamicFileTask(
 	const operonId = resolveFileTaskAutoParentOperonId({
 		enabled: true,
 		filePath,
-		tasks: deps.indexer.getAllTasks(),
+		// getFileTaskByPath already ran the same yaml/path lookup through the file index.
+		tasks: [],
 		frontmatter,
 		keyMappings: settings.keyMappings,
 	});

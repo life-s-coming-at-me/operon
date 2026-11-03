@@ -308,7 +308,7 @@ import { operonLivePreviewTaskWikilinkOverlayExtension, operonTaskWikilinkForceR
 import { operonLivePreviewKeySuggestExtension } from './src/ui/live-preview-key-suggest';
 import { debugTaskFieldSuggestion } from './src/ui/task-field-suggest';
 import { updateReadingInlineTaskRow } from './src/ui/reading-task-row';
-import { createCompactTaskRenderContext } from './src/ui/compact-task-layout';
+import { createCompactTaskRenderContext, type CompactTaskRenderContext } from './src/ui/compact-task-layout';
 import { renderCompactTaskMarkdown } from './src/ui/compact-task-markdown-renderer';
 import {
 	createIndexedReadingResolvedTask,
@@ -1721,6 +1721,7 @@ export default class OperonPlugin extends Plugin {
 	private tableFilePropertyTypeLastCheckAt = 0;
 	private readonly tableFilePropertyTypeResolver = createCachedTableFilePropertyTypeResolver();
 	private tableFilePropertyIndex: TableFilePropertyIndex | null = null;
+	private compactTaskRenderContextCache: { generation: number; context: CompactTaskRenderContext } | null = null;
 	private readonly nativeFileTaskConversionMenus = new WeakMap<Menu, NativeFileTaskConversionMenuState>();
 	private workspaceTweakPropertiesCollapseCycleId = 0;
 	private workspaceTweakPropertiesCollapseCycles = new WeakMap<MarkdownView, WorkspaceTweakPropertiesCollapseCycle>();
@@ -23135,6 +23136,7 @@ export default class OperonPlugin extends Plugin {
 			// getIndexedTask
 			getIndexedTask: (id: string) => this.indexer.getTask(id),
 			getAllTasks: () => this.indexer.getAllTasks(),
+			getCompactTaskRenderContext: () => this.getCompactTaskRenderContextForIndex(),
 			getProjectSerialDisplay: (operonId: string) => this.getProjectSerialDisplayForTask(operonId),
 			// openEditor
 			openEditor: (task: ParsedTask, editorView: EditorView) => {
@@ -23335,6 +23337,8 @@ export default class OperonPlugin extends Plugin {
 			getSettings: () => this.settings,
 			getPipelines: () => this.settings.pipelines,
 			getAllTasks: () => this.indexer.getAllTasks(),
+			getTask: (operonId: string) => this.indexer.getTask(operonId),
+			getCompactTaskLookup: () => this.getCompactTaskRenderContextForIndex().taskLookup,
 			getFileTaskByPath: (filePath: string) => this.indexer.getFileTaskByPath(filePath),
 			hasDuplicateOperonIdConflict: (operonId: string) => this.indexer.hasDuplicateOperonIdConflict(operonId),
 			getDescendantTaskSummary: (operonId: string) => this.indexer.getDescendantTaskSummary(operonId),
@@ -23444,7 +23448,7 @@ export default class OperonPlugin extends Plugin {
 				getRepeatSkipDates: (repeatSeriesId: string) => this.storage.repeatSeries.getSkipDates(repeatSeriesId),
 			};
 			const workflowStatusIdentityIndex = buildWorkflowStatusIdentityIndex(this.settings.pipelines);
-			const renderContext = createCompactTaskRenderContext(() => this.indexer.getAllTasks());
+			const renderContext = this.getCompactTaskRenderContextForIndex();
 			// Conservative shared invalidation; row preparation resolves time-sensitive chips afresh.
 			const refreshSignature = JSON.stringify([this.settings, this.indexer.getGeneration(), localToday(), getCurrentLang()]);
 			const listItems = el.querySelectorAll<HTMLElement>('li.task-list-item');
@@ -24072,6 +24076,21 @@ export default class OperonPlugin extends Plugin {
 				this.scheduleYamlPropertyVisibilityRefresh(120);
 			}),
 		);
+	}
+
+	/**
+	 * Chip render context shared by every editor pass and task line until the
+	 * index changes, so typing does not rebuild the O(tasks) lookup per pass.
+	 */
+	private getCompactTaskRenderContextForIndex(): CompactTaskRenderContext {
+		const generation = this.indexer.getGeneration();
+		if (this.compactTaskRenderContextCache?.generation !== generation) {
+			this.compactTaskRenderContextCache = {
+				generation,
+				context: createCompactTaskRenderContext(() => this.indexer.getAllTasks()),
+			};
+		}
+		return this.compactTaskRenderContextCache.context;
 	}
 
 	private scheduleYamlPropertyVisibilityRefresh(delayMs = 0): void {

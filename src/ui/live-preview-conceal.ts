@@ -81,6 +81,8 @@ export interface LivePreviewCallbacks {
 	getFilePath: (view: EditorView) => string;
 	getIndexedTask: (id: string) => IndexedTask | undefined;
 	getAllTasks: () => IndexedTask[];
+	/** Render context shared until the index changes; falls back to a per-pass context. */
+	getCompactTaskRenderContext?: () => CompactTaskRenderContext;
 	openEditor: (task: ParsedTask, view: EditorView) => void;
 	onBlockedTaskAction?: (task: ParsedTask) => void;
 	cycleStatus: (task: ParsedTask, view: EditorView) => void;
@@ -378,7 +380,7 @@ export class MetadataTailWidget extends WidgetType {
 		private readonly pipelines: Pipeline[],
 		private readonly workflowStatusIdentityIndex: WorkflowStatusIdentityIndex,
 		private readonly revealSource: () => void,
-		private renderContext: CompactTaskRenderContext | undefined = createCompactTaskRenderContext(callbacks.getAllTasks),
+		private renderContext: CompactTaskRenderContext | undefined = (callbacks.getCompactTaskRenderContext?.() ?? createCompactTaskRenderContext(callbacks.getAllTasks)),
 		settingsSignature = buildMetadataTailSettingsSignature(callbacks.getSettings()),
 	) {
 		super();
@@ -443,7 +445,7 @@ export class MetadataTailWidget extends WidgetType {
 
 		const fieldValues = getFieldValues(this.task, this.indexedTask);
 		const operonId = this.task.operonId;
-		const renderContext = this.renderContext ??= createCompactTaskRenderContext(this.callbacks.getAllTasks);
+		const renderContext = this.renderContext ??= (this.callbacks.getCompactTaskRenderContext?.() ?? createCompactTaskRenderContext(this.callbacks.getAllTasks));
 		const tasks = renderContext.tasks;
 		const taskColor = normalizeTaskColor(fieldValues['taskColor']);
 		if (taskColor) tailWrap.setCssProps({
@@ -805,7 +807,7 @@ export function operonLivePreviewConcealExtension(callbacks: LivePreviewCallback
 		const decorations = new RangeSetBuilder<Decoration>();
 		const pipelines = callbacks.getPipelines();
 		const workflowStatusIdentityIndex = buildWorkflowStatusIdentityIndex(pipelines);
-		const renderContext = createCompactTaskRenderContext(callbacks.getAllTasks);
+		const renderContext = (callbacks.getCompactTaskRenderContext?.() ?? createCompactTaskRenderContext(callbacks.getAllTasks));
 		let settingsSignature: string | undefined;
 
 		let inFencedCodeBlock = false;
