@@ -279,6 +279,13 @@ export class IndexV8Store {
 		}
 	}
 
+	/** Raw manifest payload without shard reads; null when absent or out of bounds. */
+	async readManifestPayload(): Promise<string | null> {
+		const stat = await this.adapter.stat(this.paths.manifestPath);
+		if (!stat || stat.type !== 'file' || stat.size > INDEX_V8_MAX_MANIFEST_BYTES) return null;
+		return await this.adapter.read(this.paths.manifestPath);
+	}
+
 	async load(): Promise<IndexV8LoadResult> {
 		const collectTimings = this.collectLoadMetrics ?? isOperonEnginePerfDebugEnabled();
 		const startedAt = collectTimings ? enginePerfNow() : 0;

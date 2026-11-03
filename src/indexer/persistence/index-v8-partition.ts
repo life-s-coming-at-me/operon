@@ -13,10 +13,27 @@ export class IndexV8PathError extends Error {
 	}
 }
 
+// Index passes normalize every task path repeatedly; both helpers are pure.
+const PATH_MEMO_LIMIT = 50_000;
+const normalizedPathMemo = new Map<string, string>();
+const shardIdMemo = new Map<string, IndexV8ShardId>();
+
+function rememberPath<T>(memo: Map<string, T>, key: string, value: T): T {
+	if (memo.size >= PATH_MEMO_LIMIT) memo.clear();
+	memo.set(key, value);
+	return value;
+}
+
 export function normalizeIndexV8SourcePath(input: string): string {
 	if (typeof input !== 'string' || input.length === 0) {
 		throw new IndexV8PathError('Source path must be a non-empty string');
 	}
+	const memoized = normalizedPathMemo.get(input);
+	if (memoized !== undefined) return memoized;
+	return rememberPath(normalizedPathMemo, input, validateIndexV8SourcePath(input));
+}
+
+function validateIndexV8SourcePath(input: string): string {
 	const normalized = input.replace(/\\/g, '/').normalize('NFC');
 	if (
 		normalized.startsWith('/')
@@ -53,8 +70,10 @@ export function fnv1a32Utf8Nfc(input: string): number {
 
 export function getIndexV8ShardId(sourcePath: string): IndexV8ShardId {
 	const normalized = normalizeIndexV8SourcePath(sourcePath);
+	const memoized = shardIdMemo.get(normalized);
+	if (memoized !== undefined) return memoized;
 	const shard = fnv1a32Utf8Nfc(normalized) & (INDEX_V8_SHARD_COUNT - 1);
-	return shard.toString(16).padStart(2, '0');
+	return rememberPath(shardIdMemo, normalized, shard.toString(16).padStart(2, '0'));
 }
 
 export function getAllIndexV8ShardIds(): IndexV8ShardId[] {

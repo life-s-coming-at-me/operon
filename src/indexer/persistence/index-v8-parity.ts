@@ -386,7 +386,46 @@ function projection(
 	return { dimension, left, right, leftCount, rightCount };
 }
 
+/**
+ * Conservative fast path for compareProjection: true only when both values are
+ * guaranteed to produce the same stableCompactStringify payload. False means
+ * "not proven", so the caller falls back to the exact serialized comparison.
+ */
+function isStructurallyIdentical(left: unknown, right: unknown): boolean {
+	if (left === null || typeof left !== 'object') {
+		if (left !== right) return false;
+		return left === null
+			|| typeof left === 'string'
+			|| typeof left === 'boolean'
+			|| (typeof left === 'number' && Number.isFinite(left));
+	}
+	if (right === null || typeof right !== 'object') return false;
+	if (Array.isArray(left)) {
+		if (!Array.isArray(right) || left.length !== right.length) return false;
+		for (let index = 0; index < left.length; index++) {
+			if (!isStructurallyIdentical(left[index], right[index])) return false;
+		}
+		return true;
+	}
+	if (Array.isArray(right)) return false;
+	const leftRecord = left as Record<string, unknown>;
+	const rightRecord = right as Record<string, unknown>;
+	let definedKeyCount = 0;
+	for (const key of Object.keys(leftRecord)) {
+		const value = leftRecord[key];
+		if (value === undefined) continue;
+		definedKeyCount++;
+		if (!Object.prototype.propertyIsEnumerable.call(rightRecord, key)) return false;
+		if (!isStructurallyIdentical(value, rightRecord[key])) return false;
+	}
+	for (const key of Object.keys(rightRecord)) {
+		if (rightRecord[key] !== undefined) definedKeyCount--;
+	}
+	return definedKeyCount === 0;
+}
+
 async function compareProjection(value: ParityProjection): Promise<IndexV8ParityMismatch | null> {
+	if (isStructurallyIdentical(value.left, value.right)) return null;
 	const leftPayload = stableCompactStringify(value.left);
 	const rightPayload = stableCompactStringify(value.right);
 	if (leftPayload === rightPayload) return null;

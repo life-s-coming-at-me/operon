@@ -221,6 +221,7 @@ export type CachedIndexLoadResult =
 
 export interface IndexV8ReadStore {
 	load(): Promise<IndexV8LoadResult>;
+	readManifestPayload?(): Promise<string | null>;
 	planCleanup?(): Promise<IndexV8CleanupPlan>;
 	applyCleanup?(plan: IndexV8CleanupPlan, isActive?: () => boolean): Promise<IndexV8CleanupResult>;
 	diagnoseMaintenance?(): Promise<IndexV8MaintenanceDiagnostics>;
@@ -476,6 +477,13 @@ export class OperonIndexer {
 	/** Stat-gated monitor entry point. A changed stat is validated before recovery starts. */
 	async observeIndexV8ManifestChange(): Promise<void> {
 		if (!this.indexV8Store || !this.indexV8PersistenceCoordinator || this.shuttingDown || this.recoveryRequired) return;
+		// Our own commits change the manifest stat too; skip the full shard load for them.
+		try {
+			const manifestPayload = await this.indexV8Store.readManifestPayload?.();
+			if (manifestPayload && this.indexV8PersistenceCoordinator.isVerifiedBaseline?.(manifestPayload)) return;
+		} catch {
+			// Fall through to the validating load.
+		}
 		const loaded = await this.indexV8Store.load();
 		if (loaded.status === 'loaded' && this.indexV8PersistenceCoordinator.isVerifiedBaseline?.(loaded.manifestPayload)) return;
 		if (loaded.status === 'invalid' || loaded.status === 'unsupported') {
@@ -2075,25 +2083,27 @@ export class OperonIndexer {
 		}
 		const totalMs = Math.round(enginePerfNow() - startedAt);
 		const slow = totalMs >= 100;
-		enginePerfLog(
-			'persistIndex',
-			`${totalMs}ms`,
-			'authority=v8',
-			`source=${perfContext.source}`,
-			`requestCount=${requestCount}`,
-			`snapshotBuildMs=${Math.round(perfContext.snapshotBuildMs ?? 0)}`,
-			...formatEnginePerfTraceMetadata(perfContext.trace),
-			`tasks=${Object.keys(data.tasks).length}`,
-			`taskInstances=${Object.keys(data.taskInstances ?? {}).length}`,
-			`dirtySources=${snapshot.dirty.dirtySourcePaths.size}`,
-			`affectedIds=${snapshot.dirty.affectedOperonIds.size}`,
-			`dirtyShards=${primaryResult.dirtyShardCount}`,
-			`shardsWritten=${primaryResult.shardsWritten}`,
-			`shardsReused=${primaryResult.shardsReused}`,
-			`bytesWritten=${primaryResult.bytesWritten}`,
-			`totalMs=${totalMs}`,
-			`slow=${String(slow)}`,
-		);
+		if (isOperonEnginePerfDebugEnabled()) {
+			enginePerfLog(
+				'persistIndex',
+				`${totalMs}ms`,
+				'authority=v8',
+				`source=${perfContext.source}`,
+				`requestCount=${requestCount}`,
+				`snapshotBuildMs=${Math.round(perfContext.snapshotBuildMs ?? 0)}`,
+				...formatEnginePerfTraceMetadata(perfContext.trace),
+				`tasks=${Object.keys(data.tasks).length}`,
+				`taskInstances=${Object.keys(data.taskInstances ?? {}).length}`,
+				`dirtySources=${snapshot.dirty.dirtySourcePaths.size}`,
+				`affectedIds=${snapshot.dirty.affectedOperonIds.size}`,
+				`dirtyShards=${primaryResult.dirtyShardCount}`,
+				`shardsWritten=${primaryResult.shardsWritten}`,
+				`shardsReused=${primaryResult.shardsReused}`,
+				`bytesWritten=${primaryResult.bytesWritten}`,
+				`totalMs=${totalMs}`,
+				`slow=${String(slow)}`,
+			);
+		}
 		if (primaryResult.status === 'committed') this.onIndexV8Persisted?.();
 	}
 

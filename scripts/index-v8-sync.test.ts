@@ -702,6 +702,41 @@ async function testSecondCasLossWritesOneRecoveryMarker(): Promise<void> {
 	equal(recoveryMarkerWrites, 1, 'second CAS loss must seal one durable recovery marker');
 }
 
+async function testOwnManifestCommitSkipsShardLoad(): Promise<void> {
+	const ownManifestPayload = 'own-manifest';
+	let manifestPayload = ownManifestPayload;
+	let loadCount = 0;
+	const persistence = {
+		getRuntimePhase: () => 'idle' as const,
+		setRuntimePhase: () => {},
+		isVerifiedBaseline: (payload: string) => payload === ownManifestPayload,
+		adoptVerifiedBaseline: () => {},
+		disable: () => {},
+	};
+	const storage = {
+		getSettings: () => DEFAULT_SETTINGS,
+		loadIndex: async () => null,
+		saveIndex: async () => ({ jsonBytes: 1, stringifyMs: 0, writeMs: 0, queueWaitMs: 0, totalMs: 0 }),
+	};
+	const app = {
+		vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null },
+		metadataCache: { getFileCache: () => null },
+	} as unknown as App;
+	const store = {
+		readManifestPayload: async () => manifestPayload,
+		load: async () => {
+			loadCount += 1;
+			return { status: 'invalid' as const, retryable: false as const, code: 'INVALID_SNAPSHOT' as const, metrics: { manifestBytes: 0, shardBytes: 0, shardsRead: 0, totalMs: 0 } };
+		},
+	};
+	const indexer = new OperonIndexer(app, storage as never, persistence as never, store as never);
+	await indexer.observeIndexV8ManifestChange();
+	equal(loadCount, 0, 'a manifest equal to the verified baseline must not reload shards');
+	manifestPayload = 'remote-manifest';
+	await indexer.observeIndexV8ManifestChange();
+	equal(loadCount, 1, 'a foreign manifest must still run the validating load');
+}
+
 async function testPreCoherentRecoveryAndUnloadCasAreFailSafe(): Promise<void> {
 	let phase: 'idle' | 'sync-settling' | 'rebasing' | 'recovery-required' = 'idle';
 	let loadCount = 0;
@@ -901,6 +936,7 @@ async function run(): Promise<void> {
 	testCoordinatorRuntimePhases();
 	await testBoundedSettleAndVerifiedPersistence();
 	await testSecondCasLossWritesOneRecoveryMarker();
+	await testOwnManifestCommitSkipsShardLoad();
 	await testPreCoherentRecoveryAndUnloadCasAreFailSafe();
 	await testProductionCleanupIsBackgroundAndUnloadSafe();
 	console.log(JSON.stringify({
