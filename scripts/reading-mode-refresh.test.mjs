@@ -11,7 +11,7 @@ try {
  const source=fs.readFileSync(path.join(root,'main.ts'),'utf8');
  const ast=ts.createSourceFile('main.ts',source,ts.ScriptTarget.Latest,true);
  const cls=ast.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='OperonPlugin');
- const methods=['getDynamicFileTaskFilterMarkdownViews','refreshMarkdownTaskSurfaces','runScheduledIndexSideEffects','refreshRetainedReadingSections'].map(name=>cls.members.find(n=>n.name?.getText(ast)===name).getText(ast));
+ const methods=['getDynamicFileTaskFilterMarkdownViews','refreshMarkdownTaskSurfaces','runScheduledIndexSideEffects','refreshRetainedReadingSections','readingViewMayShowTaskContent'].map(name=>cls.members.find(n=>n.name?.getText(ast)===name).getText(ast));
  const outfile=path.join(dir,'test.mjs');
  const prelude=`import {createGlobalMarkdownRefreshScope} from ${JSON.stringify(path.join(root,'src/core/markdown-refresh-scope'))};
  export class EditorView{dispatch(value){this.effects=value.effects;}}
@@ -80,6 +80,15 @@ try {
    h.readingInlineMounts.set({isConnected:true,querySelectorAll:()=>[{dataset:{operonReadingTaskId:'task'}}]}, {sourcePath:'Note.md',refresh:()=>{throw Error('stale section');}});
    h.refreshMarkdownTaskSurfaces();assert.deepEqual(view.calls,[true]);
   }
+ });
+ await test('index-only passes skip Reading views that cannot show task content',()=>{
+  const plain=new MarkdownView('Plain.md'),tasks=new MarkdownView('Tasks.md'),linking=new MarkdownView('Linking.md'),h=setup([plain,tasks,linking]);
+  h.indexer.getTaskIdsInFileSnapshot=path=>path==='Tasks.md'?['task']:[];
+  h.app.metadataCache={resolvedLinks:{'Linking.md':{'Tasks.md':1},'Plain.md':{'Other.md':1}}};
+  const result=h.refreshMarkdownTaskSurfaces({skipReadingViewsWithoutTaskContent:true});
+  assert.deepEqual(plain.calls,[]);assert.deepEqual(tasks.calls,[true]);assert.deepEqual(linking.calls,[true]);
+  assert.equal(result.skippedLeaves,1);assert.equal(result.refreshedLeaves,2);
+  h.refreshMarkdownTaskSurfaces();assert.deepEqual(plain.calls,[true]);
  });
  await test('startup readiness already schedules an authoritative refresh',()=>{
   let ready;const visit=node=>{if(ts.isExpressionStatement(node)&&node.getText(ast)==="this.taskCardIndexState = 'ready';")ready=node;ts.forEachChild(node,visit);};visit(cls);

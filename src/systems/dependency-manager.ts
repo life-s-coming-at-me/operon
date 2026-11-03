@@ -25,9 +25,22 @@ export interface DependencyChangeOptions {
 	validate?: boolean;
 }
 
+/** Order-sensitive digest of the fields validateDependencyEdge reads. */
+function buildDependencyGraphSignature(tasks: readonly IndexedTask[]): string {
+	const parts: string[] = [];
+	for (const task of tasks) {
+		const blocking = task.fieldValues['blocking'] ?? '';
+		const blockedBy = task.fieldValues['blockedBy'] ?? '';
+		if (!blocking && !blockedBy) continue;
+		parts.push(`${task.operonId}\u0001${blocking}\u0001${blockedBy}`);
+	}
+	return parts.join('\u0002');
+}
+
 export class DependencyManager {
 	private indexer: OperonIndexer;
 	private writer: TaskWriter;
+	private readonly rejectedRepairEdges = new Map<string, string>();
 
 	constructor(indexer: OperonIndexer, writer: TaskWriter) {
 		this.indexer = indexer;
@@ -101,14 +114,30 @@ export class DependencyManager {
 	async reconcileAdditiveInverseLinks(): Promise<number> {
 		let writeCount = 0;
 		const writes: Array<Promise<void>> = [];
-		for (const task of this.getAllTasksForValidation()) {
+		const tasks = this.getAllTasksForValidation();
+		// Runs after every index update: remember edges that cannot be repaired
+		// until the dependency graph changes instead of re-walking it each time.
+		let graphSignature: string | null = null;
+		const canRepair = (fromId: string, toId: string): boolean => {
+			graphSignature ??= buildDependencyGraphSignature(tasks);
+			const edgeKey = `${fromId}\u0000${toId}`;
+			if (this.rejectedRepairEdges.get(edgeKey) === graphSignature) return false;
+			if (this.canRepairAssertedEdge(fromId, toId, tasks)) {
+				this.rejectedRepairEdges.delete(edgeKey);
+				return true;
+			}
+			if (this.rejectedRepairEdges.size >= 1_000) this.rejectedRepairEdges.clear();
+			this.rejectedRepairEdges.set(edgeKey, graphSignature);
+			return false;
+		};
+		for (const task of tasks) {
 			if (this.hasDuplicateOperonIdConflict(task.operonId)) continue;
 			for (const targetId of parseDependencyIdList(task.fieldValues['blocking'])) {
 				if (this.hasDuplicateOperonIdConflict(targetId)) continue;
 				const target = this.indexer.getTask(targetId);
 				if (!target) continue;
 				if (parseDependencyIdList(target.fieldValues['blockedBy']).includes(task.operonId)) continue;
-				if (!this.canRepairAssertedEdge(task.operonId, targetId)) continue;
+				if (!canRepair(task.operonId, targetId)) continue;
 				writeCount += 1;
 				writes.push(this.addInverse(targetId, 'blockedBy', task.operonId));
 			}
@@ -117,7 +146,7 @@ export class DependencyManager {
 				const source = this.indexer.getTask(sourceId);
 				if (!source) continue;
 				if (parseDependencyIdList(source.fieldValues['blocking']).includes(task.operonId)) continue;
-				if (!this.canRepairAssertedEdge(sourceId, task.operonId)) continue;
+				if (!canRepair(sourceId, task.operonId)) continue;
 				writeCount += 1;
 				writes.push(this.addInverse(sourceId, 'blocking', task.operonId));
 			}
@@ -233,8 +262,8 @@ export class DependencyManager {
 		return tasks;
 	}
 
-	private canRepairAssertedEdge(fromId: string, toId: string): boolean {
-		const validation = validateDependencyEdge(fromId, toId, this.getAllTasksForValidation(fromId, toId));
+	private canRepairAssertedEdge(fromId: string, toId: string, tasks?: readonly IndexedTask[]): boolean {
+		const validation = validateDependencyEdge(fromId, toId, tasks ?? this.getAllTasksForValidation(fromId, toId));
 		if (validation.ok) return true;
 		console.warn('Operon: skipped invalid dependency reconcile', {
 			reason: validation.reason,

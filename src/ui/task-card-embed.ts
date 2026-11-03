@@ -384,6 +384,12 @@ export class TaskCardEmbeds {
  }
  refresh(scope: TaskRefreshScope = { kind: 'full', reason: 'unscoped' }): void {
   if (this.destroyed) return;
+  if (this.children.size === 0) {
+   // No mounted cards: drop the snapshots (attach rebuilds them) instead of copying every task.
+   this.allTasks = null; this.parents = null;
+   for (const listener of this.refreshListeners) listener(scope);
+   return;
+  }
   if (scope.kind === 'full') this.allTasks = null;
   const previous = this.refreshResolutions;
   const resolved = this.refreshResolutions = new Map<string, TaskCardResolution>();

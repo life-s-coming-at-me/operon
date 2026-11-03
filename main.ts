@@ -1443,6 +1443,8 @@ interface RefreshViewsOptions {
 	 * must leave this unset so the calendar always force-renders for them.
 	 */
 	fromIndexUpdate?: boolean;
+	/** Carries an index-only pass into its follow-up so Reading views keep the same skip. */
+	readingContentSkip?: boolean;
 }
 
 interface RefreshViewsPerfContext {
@@ -1472,6 +1474,8 @@ interface MarkdownTaskSurfaceRefreshOptions {
 	scope?: MarkdownRefreshScope;
 	forceTaskWikilinkOverlayFilePath?: string;
 	forceReadingViewRerender?: boolean;
+	/** Index-only passes: leave Reading views that cannot show Operon task content alone. */
+	skipReadingViewsWithoutTaskContent?: boolean;
 }
 
 type DuplicateAlertStatusBarState = 'hidden' | 'conflict' | 'resolved';
@@ -1764,6 +1768,7 @@ export default class OperonPlugin extends Plugin {
 	private refreshViewsPendingPerfContext: RefreshViewsPerfContext | null = null;
 	private refreshViewsPendingMarkdownScope: MarkdownRefreshScope | null = null;
 	private refreshViewsPendingPreserveKanbanViewport = false;
+	private refreshViewsPendingReadingRerenderRequired = false;
 	private livePreviewAuthoringCursorRestoreLease: LivePreviewAuthoringCursorRestoreLease | null = null;
 	private livePreviewAuthoringCursorRestoreClearTimer: WindowTimeoutHandle | null = null;
 	private indexSideEffectTimer: WindowTimeoutHandle | null = null;
@@ -23389,6 +23394,21 @@ export default class OperonPlugin extends Plugin {
 	 */
 	private readonly readingInlineMounts = new Map<HTMLElement, { sourcePath: string; refresh: () => void }>();
 
+	/**
+	 * A Reading view can only show Operon task content through its own tasks,
+	 * already rendered Operon rows/overlays, or links and embeds that resolve to
+	 * task sources. Views without any of these need no index-driven rerender.
+	 */
+	private readingViewMayShowTaskContent(view: MarkdownView): boolean {
+		const filePath = view.file?.path;
+		if (!filePath) return true;
+		if (view.contentEl.querySelector('[data-operon-reading-task-id], [data-operon-task-wikilink-wrapper]')) return true;
+		if (this.indexer.getTaskIdsInFileSnapshot(filePath).length > 0) return true;
+		const links = this.app.metadataCache.resolvedLinks[filePath];
+		if (!links) return false;
+		return Object.keys(links).some(target => this.indexer.getTaskIdsInFileSnapshot(target).length > 0);
+	}
+
 	private refreshRetainedReadingSections(root: HTMLElement, sourcePath: string): boolean {
 		if (!root.querySelector('[data-operon-reading-task-id], [data-operon-task-wikilink-wrapper]')) return false;
 		let found = false;
@@ -26517,6 +26537,9 @@ export default class OperonPlugin extends Plugin {
 		if (resolvedOptions.fromIndexUpdate !== true) {
 			this.refreshViewsPendingNonIndexRequest = true;
 		}
+		if (resolvedOptions.fromIndexUpdate !== true && resolvedOptions.readingContentSkip !== true) {
+			this.refreshViewsPendingReadingRerenderRequired = true;
+		}
 		if (resolvedOptions.fromIndexUpdate !== true && !resolvedOptions.statusCycleTrace) {
 			this.refreshViewsPendingCalendarStructuralRequest = true;
 		}
@@ -26570,6 +26593,8 @@ export default class OperonPlugin extends Plugin {
 			const allowCalendarContentSkip = !this.refreshViewsPendingNonIndexRequest;
 			const allowCalendarStatusReconcile = !this.refreshViewsPendingCalendarStructuralRequest;
 			const preserveKanbanViewport = this.refreshViewsPendingPreserveKanbanViewport;
+			const allowReadingContentSkip = !this.refreshViewsPendingReadingRerenderRequired;
+			this.refreshViewsPendingReadingRerenderRequired = false;
 			this.refreshViewsFollowupRequested = false;
 			this.refreshViewsPendingNonIndexRequest = false;
 			this.refreshViewsPendingCalendarStructuralRequest = false;
@@ -26577,7 +26602,7 @@ export default class OperonPlugin extends Plugin {
 			this.refreshViewsPendingPerfContext = null;
 			this.refreshViewsPendingMarkdownScope = null;
 			this.refreshViewsPendingPreserveKanbanViewport = false;
-			this.renderViews(shouldScheduleFollowup, perfContext, markdownScope, allowCalendarContentSkip, preserveKanbanViewport, allowCalendarStatusReconcile);
+			this.renderViews(shouldScheduleFollowup, perfContext, markdownScope, allowCalendarContentSkip, preserveKanbanViewport, allowCalendarStatusReconcile, allowReadingContentSkip);
 		});
 	}
 
@@ -26588,6 +26613,7 @@ export default class OperonPlugin extends Plugin {
 		allowCalendarContentSkip = false,
 		preserveKanbanViewport = false,
 		allowCalendarStatusReconcile = false,
+		allowReadingContentSkip = false,
 	): void {
 		this.refreshViewsCallCount++;
 		const startedAt = perfNow();
@@ -26597,7 +26623,9 @@ export default class OperonPlugin extends Plugin {
 		this.pruneDisconnectedDynamicFileTaskFilterReadingHosts();
 
 		if (isPrimaryPass) {
-			const freezeCalendarRefresh = this.shouldFreezeCalendarRefresh();
+			// Without calendar leaves there is nothing to defer (and no focus polling to arm).
+			const freezeCalendarRefresh = this.app.workspace.getLeavesOfType(CALENDAR_VIEW_TYPE).length > 0
+				&& this.shouldFreezeCalendarRefresh();
 			const freezeKanbanRefresh = this.shouldFreezeKanbanRefresh();
 				const pinnedStartedAt = perfContext ? enginePerfNow() : 0;
 				this.pinnedDock?.render();
@@ -26668,7 +26696,10 @@ export default class OperonPlugin extends Plugin {
 			this.recordRefreshViewsPerfStage(stageTimings, perfContext, 'tracker-status', trackerStatusStartedAt);
 		}
 		const markdownStartedAt = perfContext ? enginePerfNow() : 0;
-		const markdownResult = this.refreshMarkdownTaskSurfaces({ scope: markdownScope });
+		const markdownResult = this.refreshMarkdownTaskSurfaces({
+			scope: markdownScope,
+			skipReadingViewsWithoutTaskContent: allowReadingContentSkip,
+		});
 		this.recordRefreshViewsPerfStage(
 			stageTimings,
 			perfContext,
@@ -26752,6 +26783,7 @@ export default class OperonPlugin extends Plugin {
 						statusCycleTrace: followupContext?.trace ?? null,
 					reason: followupContext?.reason ?? markdownScope.reason,
 					markdownScope: followupContext?.markdownScope ?? markdownScope,
+					readingContentSkip: allowReadingContentSkip,
 					});
 				}, 180);
 			}
@@ -26898,8 +26930,12 @@ export default class OperonPlugin extends Plugin {
 				skippedLeaves++;
 				continue;
 			}
-			refreshedLeaves++;
 			if (view.getMode() === 'preview') {
+				if (options.skipReadingViewsWithoutTaskContent === true && !this.readingViewMayShowTaskContent(view)) {
+					skippedLeaves++;
+					continue;
+				}
+				refreshedLeaves++;
 				try {
 					// Index-only changes must rebuild cached Reading sections too.
 					if (options.forceReadingViewRerender === true || !this.refreshRetainedReadingSections(view.contentEl, view.file?.path ?? '')) {
@@ -26908,6 +26944,7 @@ export default class OperonPlugin extends Plugin {
 				} catch { /* view may be detached */ }
 				continue;
 			}
+			refreshedLeaves++;
 			const cm = getEditorViewFromEditor(view.editor);
 			if (cm instanceof EditorView) {
 				try {
@@ -27453,11 +27490,16 @@ export default class OperonPlugin extends Plugin {
 	 */
 	private async autoUnpinFinishedTasks(): Promise<void> {
 		if (!this.pinnedCache) return;
+		const pinnedIds = this.pinnedCache.getPinnedIds();
+		if (pinnedIds.length === 0) return;
 		const workflowStatusIdentityIndex = buildWorkflowStatusIdentityIndex(this.settings.pipelines);
-		const candidates = this.indexer.getAllTasks().filter(task => {
-			if (!this.pinnedCache!.isPinned(task.operonId)) return false;
-			return shouldAutoUnpinTerminalTask(task, this.settings.pipelines, workflowStatusIdentityIndex);
-		});
+		const candidates: IndexedTask[] = [];
+		for (const operonId of pinnedIds) {
+			const task = this.indexer.getTask(operonId);
+			if (task && shouldAutoUnpinTerminalTask(task, this.settings.pipelines, workflowStatusIdentityIndex)) {
+				candidates.push(task);
+			}
+		}
 		if (candidates.length === 0) return;
 		const nextPinnedIds = new Set(this.pinnedCache.getPinnedIds());
 		for (const task of candidates) {
@@ -28124,7 +28166,9 @@ export default class OperonPlugin extends Plugin {
 
 		if (canContinue && !canContinue()) return;
 		const indexedTasks = (canContinue && this.startupPreviousTasks.get(filePath))
-   || this.indexer.getAllTasks().filter(task => task.primary.filePath === filePath);
+			|| this.indexer.getTaskIdsInFileSnapshot(filePath)
+				.map(operonId => this.indexer.getTask(operonId))
+				.filter((task): task is IndexedTask => task?.primary.filePath === filePath);
 		if (indexedTasks.length === 0) {
 			this.indexer.scheduleReindex(filePath);
 			return;

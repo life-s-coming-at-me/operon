@@ -124,6 +124,8 @@ export class ExcalidrawTaskCleanup {
    });
    this.bindings.set(view, binding);
   }
+  // Reconciliation only acts on bound drawings; binding a view re-enters sync.
+  if (this.bindings.size === 0) return;
   this.request();
  }
  private request(): void {

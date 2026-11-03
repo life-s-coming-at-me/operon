@@ -123,7 +123,7 @@ function normalizationHarness() {
  h.resolveOperonIdPlaceholdersInContent = (value: string) => value; h.resolveTemplatedFileTaskContent = (value: string) => value.replace('template-id', 'task001');
  const old = { operonId: 'task001', fieldValues: { status: 'Project.Done', dateCompleted: '2026-01-01' }, primary: { filePath: file.path, format: 'inline', lineNumber: 0 } };
  let indexed = [old]; const scheduled: string[] = [], writes: any[] = [];
- h.indexer = { getAllTasks: () => indexed, hasDuplicateOperonIdConflict: () => false, scheduleReindex: (path: string) => scheduled.push(path) };
+ h.indexer = { getAllTasks: () => indexed, getTask: (id: string) => indexed.find(task => task.operonId === id), getTaskIdsInFileSnapshot: (path: string) => indexed.filter(task => task.primary.filePath === path).map(task => task.operonId), hasDuplicateOperonIdConflict: () => false, scheduleReindex: (path: string) => scheduled.push(path) };
  h.buildTerminalDateRemovalNormalization = () => ({ status: 'Project.Inbox', dateCompleted: '' });
  h.writer = { writeTaskFields: async (_id: string, payload: unknown, options: unknown) => { writes.push({ payload, options }); return true; } };
  h.refreshViews = () => {};

@@ -74,6 +74,8 @@ class AssigneeImages {
    if ([...this.bindings].some(binding => binding.imagePath === file.path)) this.schedule();
   };
   this.events.push({ offref: ref => app.metadataCache.offref(ref), ref: app.metadataCache.on('changed', file => {
+   // Without an image property nothing resolves; refreshAssigneeChipImages re-arms on change.
+   if (!this.property.trim()) return;
    if ([...this.bindings].some(binding => !binding.personPath || binding.personPath === file.path)) this.schedule();
   }) });
   for (const ref of [app.vault.on('create', changed), app.vault.on('modify', imageChanged), app.vault.on('delete', changed), app.vault.on('rename', changed)]) {
