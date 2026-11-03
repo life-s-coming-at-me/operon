@@ -1721,6 +1721,7 @@ export default class OperonPlugin extends Plugin {
 	private tableFilePropertyTypeLastCheckAt = 0;
 	private readonly tableFilePropertyTypeResolver = createCachedTableFilePropertyTypeResolver();
 	private tableFilePropertyIndex: TableFilePropertyIndex | null = null;
+	private readonly frontmatterSignatureByPath = new Map<string, string>();
 	private readonly nativeFileTaskConversionMenus = new WeakMap<Menu, NativeFileTaskConversionMenuState>();
 	private workspaceTweakPropertiesCollapseCycleId = 0;
 	private workspaceTweakPropertiesCollapseCycles = new WeakMap<MarkdownView, WorkspaceTweakPropertiesCollapseCycle>();
@@ -24061,8 +24062,11 @@ export default class OperonPlugin extends Plugin {
 		);
 
 		this.registerEvent(
-			this.app.metadataCache.on('changed', file => {
+			this.app.metadataCache.on('changed', (file, _data, cache) => {
 				if (file.extension !== 'md') return;
+				// Body-only edits (every autosave while typing) leave all
+				// frontmatter-derived caches and surfaces below valid.
+				if (!this.recordFrontmatterSignature(file.path, cache?.frontmatter)) return;
 				invalidateCustomFieldValueCandidateCache(this.app);
 				invalidateLocationPlaceIndex(this.app);
 				this.tableFilePropertyIndex?.invalidateFile(file.path);
@@ -24072,6 +24076,19 @@ export default class OperonPlugin extends Plugin {
 				this.scheduleYamlPropertyVisibilityRefresh(120);
 			}),
 		);
+	}
+
+	/** Returns true when the file's frontmatter differs from the last observed one. */
+	private recordFrontmatterSignature(filePath: string, frontmatter: unknown): boolean {
+		let signature: string;
+		try {
+			signature = JSON.stringify(frontmatter ?? null);
+		} catch {
+			return true;
+		}
+		if (this.frontmatterSignatureByPath.get(filePath) === signature) return false;
+		this.frontmatterSignatureByPath.set(filePath, signature);
+		return true;
 	}
 
 	private scheduleYamlPropertyVisibilityRefresh(delayMs = 0): void {
@@ -27351,6 +27368,7 @@ export default class OperonPlugin extends Plugin {
 						}
 						void this.recordPeriodicContainerVerifiedDelete(indexedBeforeDelete, file.path);
 						this.agentRuntimeSourceHydrator?.invalidatePath(file.path);
+						this.frontmatterSignatureByPath.delete(file.path);
 						invalidateCustomFieldValueCandidateCache(this.app);
 						invalidateLocationPlaceIndex(this.app);
 						this.tableFilePropertyIndex?.removeFile(file.path);
@@ -27382,6 +27400,7 @@ export default class OperonPlugin extends Plugin {
 				this.agentRuntimeSourceHydrator?.invalidatePath(oldPath);
 				this.agentRuntimeSourceHydrator?.invalidatePath(file.path);
 				this.taskSourceModifyReconciler?.handleRename(oldPath, file.path);
+				this.frontmatterSignatureByPath.delete(oldPath);
 
 				invalidateCustomFieldValueCandidateCache(this.app);
 				invalidateLocationPlaceIndex(this.app);

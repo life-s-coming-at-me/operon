@@ -948,6 +948,11 @@ export class OperonIndexer {
 	): Promise<void> {
 		const startedAt = enginePerfNow();
 		if (isOperonExcludedPath(filePath, this.storage.getSettings({ committedMappings: true }))) {
+			if (!this.hasSourceInstances(filePath)) {
+				this.fileMtimes.delete(filePath);
+				this.fileSizes.delete(filePath);
+				return;
+			}
 			const beforeById = this.snapshotCanonicalTasksByInstanceFile(filePath);
 			const removedTasks = this.removeTasksByFile(filePath);
 			this.fileMtimes.delete(filePath);
@@ -1000,6 +1005,20 @@ export class OperonIndexer {
 			return;
 		}
 		const scanMs = enginePerfNow() - scanStartedAt;
+
+		// A file without tasks before or after the scan cannot change the index:
+		// skip the generation bump, persistence and listener fan-out.
+		if (staged.taskInstances.size === 0 && !this.hasSourceInstances(filePath)) {
+			this.commitFileScanState(staged);
+			enginePerfLog(
+				'index.reindex.incremental',
+				'files=1',
+				'noop=true',
+				`scanMs=${Math.round(scanMs)}`,
+				`totalMs=${Math.round(enginePerfNow() - startedAt)}`,
+			);
+			return;
+		}
 
 		const reconcileStartedAt = enginePerfNow();
 		const beforeById = this.snapshotCanonicalTasksByInstanceFile(filePath);
@@ -1334,6 +1353,11 @@ export class OperonIndexer {
 		let mutated = false;
 		for (const fp of filePaths) {
 			if (isOperonExcludedPath(fp, this.storage.getSettings({ committedMappings: true }))) {
+				if (!this.hasSourceInstances(fp)) {
+					this.fileMtimes.delete(fp);
+					this.fileSizes.delete(fp);
+					continue;
+				}
 				for (const [operonId, task] of this.snapshotCanonicalTasksByInstanceFile(fp)) {
 					if (!beforeById.has(operonId)) beforeById.set(operonId, task);
 				}
@@ -1364,6 +1388,10 @@ export class OperonIndexer {
 				getNativePropertyIndex(this.app).fail(fp);
     console.warn(`Operon: failed to reindex ${fp}; keeping previous index state`, error);
     failedPaths.push(fp);
+				continue;
+			}
+			if (staged.taskInstances.size === 0 && !this.hasSourceInstances(fp)) {
+				this.commitFileScanState(staged);
 				continue;
 			}
 			for (const [operonId, task] of this.snapshotCanonicalTasksByInstanceFile(fp)) {
@@ -1425,6 +1453,11 @@ export class OperonIndexer {
 	}
 
 	private async doHandleFileDelete(filePath: string, options: ReindexOptions = {}): Promise<void> {
+		if (!this.hasSourceInstances(filePath)) {
+			this.fileMtimes.delete(filePath);
+			this.fileSizes.delete(filePath);
+			return;
+		}
 		const beforeById = this.snapshotCanonicalTasksByInstanceFile(filePath);
 		const removedTasks = this.removeTasksByFile(filePath);
 		this.fileMtimes.delete(filePath);
@@ -1456,6 +1489,26 @@ export class OperonIndexer {
 
 	private async doHandleFileRename(oldPath: string, newPath: string): Promise<void> {
   getNativePropertyIndex(this.app).remove(oldPath);
+		const renamedFileWithoutTasks = this.hasSourceInstances(oldPath)
+			? null
+			: this.app.vault.getAbstractFileByPath(newPath);
+		if (renamedFileWithoutTasks instanceof TFile) {
+			// Nothing indexed moves; keep bookkeeping and let the follow-up scan
+			// pick up tasks that may have been written before the move.
+			this.fileMtimes.delete(oldPath);
+			this.fileSizes.delete(oldPath);
+			if (isOperonExcludedPath(newPath, this.storage.getSettings({ committedMappings: true }))) {
+				this.pendingFiles.delete(oldPath);
+				this.fileMtimes.delete(newPath);
+				this.fileSizes.delete(newPath);
+				return;
+			}
+			if (this.pendingFiles.delete(oldPath)) this.pendingFiles.add(newPath);
+			this.fileMtimes.set(newPath, renamedFileWithoutTasks.stat.mtime);
+			this.fileSizes.set(newPath, renamedFileWithoutTasks.stat.size);
+			this.scheduleReindex(newPath);
+			return;
+		}
 		const beforeById = this.snapshotCanonicalTasksByInstanceFile(oldPath);
 		if (isOperonExcludedPath(newPath, this.storage.getSettings({ committedMappings: true }))) {
 			const removedTasks = this.removeTasksByFile(oldPath);
@@ -1706,6 +1759,15 @@ export class OperonIndexer {
 		state.operonIdInstances.set(operonId, instanceKeys);
 		this.addSourceInstanceKey(data.location.filePath, instanceKey, state);
 		this.reconcileOperonId(operonId, state);
+	}
+
+	/** True when the live index holds a task instance sourced from this file (fails open). */
+	private hasSourceInstances(filePath: string): boolean {
+		try {
+			return (this.sourceInstanceKeys.get(normalizeIndexV8SourcePath(filePath))?.size ?? 0) > 0;
+		} catch {
+			return true;
+		}
 	}
 
 	/**

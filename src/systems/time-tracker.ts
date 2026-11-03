@@ -93,6 +93,8 @@ export class TimeTracker {
 	private stopPromise: Promise<boolean> | null = null;
 	private transitionQueue: Promise<unknown> = Promise.resolve();
 	private transitionState: TimeTrackerTransitionState | null = null;
+	/** State last published by resumeFromIndex; any other 'state' emit clears it. */
+	private lastResumedState: { record: string; task: IndexedTask | undefined } | null = null;
 	private finalizedActiveRecordIds: Set<string> = new Set();
 	private historyCache: HistoryCacheEntry | null = null;
 	private readonly sessionCreatedListeners = new Set<(session: TrackerSession) => void>();
@@ -167,9 +169,22 @@ export class TimeTracker {
 	}
 
 	private emit(event: TimeTrackerEvent): void {
+		if (event === 'state') this.lastResumedState = null;
 		for (const listener of this.listeners) {
 			listener(event);
 		}
+	}
+
+	/**
+	 * Index updates resume the tracker after every reindex. Re-publish 'state'
+	 * only when the stored tracker or the tracked task's indexed object changed;
+	 * the indexer replaces a task object only when its source is rescanned.
+	 */
+	private emitResumedStateIfChanged(record: string, task: IndexedTask | undefined): void {
+		const previous = this.lastResumedState;
+		if (previous && previous.record === record && previous.task === task) return;
+		this.emit('state');
+		this.lastResumedState = { record, task };
 	}
 
 	getTransitionState(): TimeTrackerTransitionState | null {
@@ -216,21 +231,24 @@ export class TimeTracker {
 		const storedActive = this.activeTrackerStore.getActiveForUser();
 		if (storedActive) {
 			this.activeTracker = this.activeRecordToInternal(storedActive);
-			if (this.activeTracker.operonId && !this.indexer.getTask(this.activeTracker.operonId)) {
+			const trackedTask = this.activeTracker.operonId
+				? this.indexer.getTask(this.activeTracker.operonId)
+				: undefined;
+			if (this.activeTracker.operonId && !trackedTask) {
 				await this.clearActiveTracker();
 				this.stopTicker();
 				this.emit('state');
 				return;
 			}
 			this.startTicker();
-			this.emit('state');
+			this.emitResumedStateIfChanged(JSON.stringify(storedActive), trackedTask);
 			return;
 		}
 
 		if (!options.migrateLegacy) {
 			this.activeTracker = null;
 			this.stopTicker();
-			this.emit('state');
+			this.emitResumedStateIfChanged('', undefined);
 			return;
 		}
 

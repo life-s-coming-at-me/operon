@@ -260,6 +260,67 @@ test('a source removed before deferred reconciliation uses the file-delete path'
 	assert.equal(removedCount, 1);
 });
 
+function observeIndexPublications(harness: ReturnType<typeof createIndexerHarness>) {
+	const counts = { updates: 0, changes: 0, removed: 0 };
+	harness.indexer.onIndexUpdated = () => { counts.updates += 1; };
+	harness.indexer.onTasksChanged = changes => { counts.changes += changes.length; };
+	harness.indexer.onTasksRemoved = removed => { counts.removed += removed.length; };
+	return counts;
+}
+
+function editSource(harness: ReturnType<typeof createIndexerHarness>, nextContent: string): void {
+	harness.content.value = nextContent;
+	harness.file.stat.mtime += 1;
+	harness.file.stat.size = nextContent.length;
+}
+
+test('editing a source without tasks publishes no index update', async () => {
+	const harness = createIndexerHarness('# Note\n\nPlain text');
+	await harness.indexer.fullReindex();
+	const counts = observeIndexPublications(harness);
+	const generation = harness.indexer.getGeneration();
+
+	editSource(harness, '# Note\n\nPlain text, typed further');
+	await harness.indexer.reindexFilePath(harness.filePath);
+	editSource(harness, '# Note\n\nPlain text, typed even further');
+	await harness.indexer.reindexFilesBatch([harness.filePath]);
+	editSource(harness, '# Note\n\n- [ ] A plain checkbox without identity');
+	await harness.indexer.reindexFilePath(harness.filePath);
+
+	assert.deepEqual(counts, { updates: 0, changes: 0, removed: 0 });
+	assert.equal(harness.indexer.getGeneration(), generation);
+});
+
+test('a source gaining or losing its only task still publishes index updates', async () => {
+	const harness = createIndexerHarness('Plain text');
+	await harness.indexer.fullReindex();
+	const counts = observeIndexPublications(harness);
+	const generation = harness.indexer.getGeneration();
+
+	editSource(harness, '- [ ] Inline task {{operonId:: inline1}} {{status:: Project.Inbox}}');
+	await harness.indexer.reindexFilePath(harness.filePath);
+	assert.ok(harness.indexer.getTask('inline1'));
+	assert.equal(counts.updates, 1);
+	assert.ok(harness.indexer.getGeneration() > generation);
+
+	editSource(harness, 'Plain text again');
+	await harness.indexer.reindexFilesBatch([harness.filePath]);
+	assert.equal(harness.indexer.getTask('inline1'), undefined);
+	assert.equal(counts.updates, 2);
+	assert.equal(counts.removed, 1);
+});
+
+test('deleting a source without tasks leaves the index generation unchanged', async () => {
+	const harness = createIndexerHarness('Plain text');
+	await harness.indexer.fullReindex();
+	const counts = observeIndexPublications(harness);
+	const generation = harness.indexer.getGeneration();
+	harness.exists.value = false;
+	await harness.indexer.handleFileDelete(harness.filePath);
+	assert.deepEqual(counts, { updates: 0, changes: 0, removed: 0 });
+	assert.equal(harness.indexer.getGeneration(), generation);
+});
+
 test('main wiring defers suppressed events and forces exact reconciliation without platform forks', () => {
 	const mainSource = readFileSync('main.ts', 'utf8');
 	const watcherStart = mainSource.indexOf('private registerFileWatchers()');
