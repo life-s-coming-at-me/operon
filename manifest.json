@@ -1,0 +1,10 @@
+{
+	"id": "operon",
+	"name": "Operon",
+	"version": "4.4.1-perf.1",
+	"minAppVersion": "1.13.7",
+	"description": "UNOFFICIAL private performance test build of Operon 4.4.0 (not for distribution). Task and project management system that unifies inline tasks and file-based tasks in the same workflows with Tables, Filters, Calendars, Kanban boards, Gantt views, Canvas, and time tracking.",
+	"author": "Hasan Yılmaz",
+	"authorUrl": "https://github.com/hasanyilmaz",
+	"isDesktopOnly": false
+}
